@@ -2,7 +2,7 @@ import os, time, commands, re, logging, glob, threading, shutil
 from autotest_lib.client.bin import utils
 from autotest_lib.client.common_lib import error
 import aexpect, virt_utils, kvm_monitor, ppm_utils, virt_test_setup
-import virt_vm, kvm_vm
+import virt_vm, kvm_vm, libvirt_vm
 try:
     import PIL.Image
 except ImportError:
@@ -51,12 +51,23 @@ def preprocess_vm(test, params, env, name):
     """
     logging.debug("Preprocessing VM '%s'", name)
     vm = env.get_vm(name)
+    vm_type = params.get('vm_type')
     if not vm:
         logging.debug("VM object for '%s' does not exist, creating it", name)
-        vm_type = params.get('vm_type')
+        #vm_type = params.get('vm_type')
         if vm_type == 'kvm':
             vm = kvm_vm.VM(name, params, test.bindir, env.get("address_cache"))
+        if vm_type == 'libvirt':
+            vm = libvirt_vm.VM(name, params, test.bindir, env.get("address_cache"))
         env.register_vm(name, vm)
+
+    remove_vm = False
+    if params.get("force_remove_vm") == "yes":
+        logging.debug("'force_remove_vm' specified; removing VM...")
+        remove_vm = True
+
+    if remove_vm and not vm.remove_vm(name):
+        raise error.TestError("Could not remove VM")
 
     start_vm = False
 
@@ -68,20 +79,32 @@ def preprocess_vm(test, params, env, name):
                       "incoming migration mode")
         start_vm = True
     elif params.get("start_vm") == "yes":
-        if not vm.is_alive():
-            logging.debug("VM is not alive, starting it")
-            start_vm = True
-        if vm.needs_restart(name=name, params=params, basedir=test.bindir):
-            logging.debug("Current VM specs differ from requested one; "
-                          "restarting it")
-            start_vm = True
+        # need to deal with libvirt VM differently than qemu
+        if vm_type == 'libvirt':
+            if not vm.virsh_is_alive(name):
+                logging.debug("VM is not alive; starting it...")
+                start_vm = True
+        else:
+            if not vm.is_alive():
+                logging.debug("VM is not alive, starting it")
+                start_vm = True
+            if vm.needs_restart(name=name, params=params, basedir=test.bindir):
+                logging.debug("Current VM specs differ from requested one; "
+                              "restarting it")
+                start_vm = True
 
     if start_vm:
-        # Start the VM (or restart it if it's already up)
-        vm.create(name, params, test.bindir,
-                  migration_mode=params.get("migration_mode"))
-    else:
-        # Don't start the VM, just update its params
+        if vm_type != 'libvirt':
+            # Start the VM (or restart it if it's already up)
+            if params.get("type") == "unattended_install":
+              vm.create(name, params, test.bindir,
+                      migration_mode=params.get("migration_mode"))
+        else:
+            vm.params = params
+            if vm_type == 'libvirt':
+                vm.virsh_start(name)
+
+    if vm_type == 'libvirt':
         vm.params = params
 
     scrdump_filename = os.path.join(test.debugdir, "pre_%s.ppm" % name)
@@ -277,6 +300,7 @@ def preprocess(test, params, env):
     if params.get("setup_hugepages") == "yes":
         h = virt_test_setup.HugePageConfig(params)
         h.setup()
+        libvirt_vm.libvirtd_restart()
 
     # Execute any pre_commands
     if params.get("pre_command"):
@@ -377,6 +401,7 @@ def postprocess(test, params, env):
     if params.get("setup_hugepages") == "yes":
         h = virt_test_setup.HugePageConfig(params)
         h.cleanup()
+        libvirt_vm.libvirtd_restart()
 
     # Execute any post_commands
     if params.get("post_command"):
