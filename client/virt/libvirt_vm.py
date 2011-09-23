@@ -83,28 +83,16 @@ class VM(virt_vm.BaseVM):
 
     def is_alive(self):
         """
-        Return True if the VM is alive.
+        Return True if VM is alive.
         """
-        if self.params.get("type") == "unattended_install":
-            return not self.is_dead()
-        else:
-            if self.virsh_is_alive(self.name):
-                return True
-            else:
-                return False
+        return self.virsh_is_alive(self.name)
 
 
     def is_dead(self):
         """
-        Return True if the qemu process is dead.
+        Return True if VM is dead.
         """
-        if self.params.get("type") == "unattended_install":
-            return not self.process or not self.process.is_alive()
-        else:
-            if self.virsh_is_dead(self.name):
-                return True
-            else:
-                return False
+        return self.virsh_is_dead(self.name)
 
 
     def virsh_uri(self):
@@ -575,11 +563,10 @@ class VM(virt_vm.BaseVM):
         # Clone this VM using the new params
         vm = self.clone(name, params, root_dir, copy_state=True)
 
-        virt_install_binary = virt_utils.get_path(root_dir, params.get("virt_install_binary",
-                                                              "virt-install"))
-        # Get the output of 'virsh --help' (log a message in case this call
-        # never returns or causes some other kind of trouble)
-        logging.debug("Getting output of 'virt-install --help'")
+        virt_install_binary = virt_utils.get_path(root_dir,
+                                    params.get("virt_install_binary",
+                                    "virt-install"))
+
         help = commands.getoutput("%s --help" % virt_install_binary)
 
         # Start constructing the qemu command
@@ -758,6 +745,8 @@ class VM(virt_vm.BaseVM):
         if extra_params:
             virt_install_cmd += " --extra-args '%s'" % extra_params
 
+        virt_install_cmd += " --noautoconsole"
+
         return virt_install_cmd
 
 
@@ -889,44 +878,6 @@ class VM(virt_vm.BaseVM):
                 else:
                     virt_utils.generate_mac_address(self.instance, vlan)
 
-            # Assign a PCI assignable device
-            self.pci_assignable = None
-            pa_type = params.get("pci_assignable")
-            if pa_type and pa_type != "no":
-                pa_devices_requested = params.get("devices_requested")
-
-                # Virtual Functions (VF) assignable devices
-                if pa_type == "vf":
-                    self.pci_assignable = virt_utils.PciAssignable(
-                        type=pa_type,
-                        driver=params.get("driver"),
-                        driver_option=params.get("driver_option"),
-                        devices_requested=pa_devices_requested)
-                # Physical NIC (PF) assignable devices
-                elif pa_type == "pf":
-                    self.pci_assignable = virt_utils.PciAssignable(
-                        type=pa_type,
-                        names=params.get("device_names"),
-                        devices_requested=pa_devices_requested)
-                # Working with both VF and PF
-                elif pa_type == "mixed":
-                    self.pci_assignable = virt_utils.PciAssignable(
-                        type=pa_type,
-                        driver=params.get("driver"),
-                        driver_option=params.get("driver_option"),
-                        names=params.get("device_names"),
-                        devices_requested=pa_devices_requested)
-                else:
-                    raise virt_vm.VMBadPATypeError(pa_type)
-
-                self.pa_pci_ids = self.pci_assignable.request_devs()
-
-                if self.pa_pci_ids:
-                    logging.debug("Successfuly assigned devices: %s",
-                                  self.pa_pci_ids)
-                else:
-                    raise virt_vm.VMPAError(pa_type)
-
             # Make qemu command
             qemu_command = self.__make_libvirt_command()
 
@@ -943,18 +894,11 @@ class VM(virt_vm.BaseVM):
                                  self.migration_port)
 
             logging.info("Running libvirt command:\n%s", qemu_command)
-            self.process = aexpect.run_bg(qemu_command, None,
-                                                 logging.info, "(libvirt) ")
+            self.process = aexpect.run_bg(qemu_command, None, logging.info,
+                                          "(libvirt) ")
 
-            # Make sure the process was started successfully
-            if not self.process.is_alive():
-                e = virt_vm.VMCreateError(qemu_command,
-                                          self.process.get_status(),
-                                          self.process.get_output())
-                self.destroy()
-                raise e
-
-            logging.debug("VM appears to be alive with PID %s", self.get_pid())
+            # Time needed for the domain to be created
+            time.sleep(5)
 
             # Establish a session with the serial console -- requires a version
             # of netcat that supports -U
@@ -987,11 +931,10 @@ class VM(virt_vm.BaseVM):
             if self.is_dead():
                 return
 
-            logging.debug("Destroying VM with PID %s...", self.get_pid())
-
+            logging.debug("Destroying VM")
             if gracefully and self.params.get("shutdown_command"):
                 # Try to destroy with shell command
-                logging.debug("Trying to shutdown VM with shell command...")
+                logging.debug("Trying to shutdown VM with shell command")
                 try:
                     session = self.login()
                 except (virt_utils.LoginError, virt_vm.VMError), e:
@@ -1008,23 +951,10 @@ class VM(virt_vm.BaseVM):
                     finally:
                         session.close()
 
-
-            # If the VM isn't dead yet...
-            logging.debug("Cannot quit normally; sending a kill to close the "
-                          "deal...")
-            virt_utils.kill_process_tree(self.process.get_pid(), 9)
-            # Wait for the VM to be really dead
-            if virt_utils.wait_for(self.is_dead, 5, 0.5, 0.5):
-                logging.debug("VM is down")
-                return
-
-            logging.error("Process %s is a zombie!", self.process.get_pid())
+            self.virsh_destroy(self.name)
+            self.virsh_undefine(self.name)
 
         finally:
-            if self.pci_assignable:
-                self.pci_assignable.release_devs()
-            if self.process:
-                self.process.close()
             if self.serial_console:
                 self.serial_console.close()
             for f in ([self.get_testlog_filename(),
