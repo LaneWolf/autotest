@@ -118,6 +118,11 @@ class VM(virt_vm.BaseVM):
         return commands.getoutput("virsh domuuid %s" % (name)).rstrip('\n')
 
 
+    def virsh_screenshot(self, name, filename):
+        commands.getoutput("virsh screenshot %s %s" % (name, filename))
+        return filename
+
+
     def virsh_dumpxml(self, name):
         """
         Return the domain information as an XML dump.
@@ -1177,8 +1182,10 @@ class VM(virt_vm.BaseVM):
                 self.__make_libvirt_command(name, params, basedir))
 
 
-    def screendump(self, filename):
-        pass
+    def screendump(self, filename, debug=False):
+        if debug:
+            logging.debug("Requesting screenshot %s" % filename)
+        return self.virsh_screenshot(self.name, filename)
 
 
     def send_key(self):
