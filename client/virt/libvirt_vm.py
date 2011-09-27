@@ -9,6 +9,7 @@ from autotest_lib.client.common_lib import error
 from autotest_lib.client.bin import utils
 from xml.dom import minidom
 import virt_utils, virt_vm, aexpect
+import libvirt
 
 
 def libvirtd_restart():
@@ -39,7 +40,7 @@ class VM(virt_vm.BaseVM):
 
         @param name: The name of the object
         @param params: A dict containing VM params
-                (see method make_qemu_command for a full description)
+                (see method make_virt_install_command for a full description)
         @param root_dir: Base directory for relative filenames
         @param address_cache: A dict that maps MAC addresses to IP addresses
         @param state: If provided, use this as self.__dict__
@@ -64,8 +65,11 @@ class VM(virt_vm.BaseVM):
         self.params = params
         self.root_dir = root_dir
         self.address_cache = address_cache
-        # For now, libvirt does not have a monitor property.
-        self.monitor = None
+
+        self.connect = libvirt.open(None)
+        if self.connect is None:
+            raise libvirt.libvirtError('Failed connect to hypervisor')
+        self.dom = None
 
 
     def verify_alive(self):
@@ -85,219 +89,36 @@ class VM(virt_vm.BaseVM):
         """
         Return True if VM is alive.
         """
-        return self.virsh_is_alive(self.name)
+        if self.domain is None:
+            return False
+        
+        if self.domain.isActive():
+            return True
+        else:
+            return Fasle
 
 
     def is_dead(self):
         """
         Return True if VM is dead.
         """
-        return self.virsh_is_dead(self.name)
+        return not self.is_alive()
 
 
-    def virsh_uri(self):
-        """
-        Return the hypervisor canonical URI.
-        """
-        return commands.getoutput("virsh uri").rstrip('\n')
-
-
-    def virsh_hostname(self):
-        """
-        Return the hypervisor hostname.
-        """
-        return commands.getoutput("virsh hostname").rstrip('\n')
-
-
-    def virsh_uuid(self, name):
-        """
-        Return the Converted domain name or id to the domain UUID.
-
-        @param name: VM name
-        """
-        return commands.getoutput("virsh domuuid %s" % (name)).rstrip('\n')
-
-
-    def virsh_screenshot(self, name, filename):
-        commands.getoutput("virsh screenshot %s %s" % (name, filename))
-        return filename
-
-
-    def virsh_dumpxml(self, name):
-        """
-        Return the domain information as an XML dump.
-
-        @param name: VM name
-        """
-        return commands.getoutput("virsh dumpxml %s" % (name)).rstrip('\n')
-
-
-    def virsh_domstate(self, name):
-        """
-        Return the state about a running domain.
-
-        @param name: VM name
-        """
-        return commands.getoutput("virsh domstate %s" % (name)).rstrip('\n')
-
-
-    def virsh_is_alive(self, name):
-        """
-        Return True if the domain is started/alive.
-
-        @param name: VM name
-        """
-        return not self.virsh_is_dead(name)
-
-
-    def virsh_is_dead(self, name):
-        """
-        Return True if the domain is not started/dead.
-
-        @param name: VM name
-        """
-        if (self.virsh_domstate(name) == 'running' or
-            self.virsh_domstate(name) == 'idle'):
-            return False
-        else:
-            return True
-
-
-    def virsh_suspend(self, name):
-        """
-        Return True on successful domain suspention of VM.
-
-        Suspend  a domain. It is kept in memory but will not be scheduled.
-
-        @param name: VM name
-        """
-        status, domstate = commands.getstatusoutput("virsh suspend %s" % (name))
-        logging.debug("status=%d, domstate=%s", status, domstate.strip())
-        if status == 0:
-            if self.virsh_domstate(name) == 'paused':
-                logging.info("VM %s suspended", name)
-                return True
-            else:
-                logging.error("VM %s did not suspend", name)
-                return False
-
-
-    def virsh_resume(self, name):
-        """
-        Return True on successful domain resumption of VM.
-
-        Move a domain out of the suspended state.
-
-        @param name: VM name
-        """
-        status, domstate = commands.getstatusoutput("virsh resume %s" % (name))
-        logging.debug("status=%d, domstate=%s", status, domstate.strip())
-        if status == 0:
-            if self.virsh_is_alive(name):
-                logging.info("VM %s resumed", name)
-                return True
-            else:
-                logging.error("VM %s did not resume", name)
-                return False
-
-
-    def virsh_start(self, name):
-        """
-        Return True on successful domain start.
-
-        Start a (previously defined) inactive domain.
-
-        @param name: VM name
-        """
-        if self.virsh_is_alive(name):
-            return
-        status, domstate = commands.getstatusoutput("virsh start %s" % (name))
-        logging.debug("status=%d, domstate=%s", status, domstate.strip())
-        if status == 0:
-            if self.wait_for_guest_to_start(name):
-                logging.info("VM %s started", name)
-                return True
-            else:
-                logging.error("VM %s did not start", name)
-                return False
-
-
-    def virsh_shutdown(self, name):
-        """
-        Return True on successful domain shutdown.
-
-        Gracefully shuts down a domain.
-
-        @param name: VM name
-        """
-        if self.virsh_domstate(name) == 'shut off':
-            return True
-        status = commands.getstatus("virsh shutdown %s" % (name))
-        if status == 0:
-            if self.wait_for_guest_shutdown(name):
-                logging.debug("destroyed VM %s", name)
-                return True
-            else:
-                logging.error("Destroy VM %s failed", name)
-                return False
-
-
-    def virsh_destroy(self, name):
-        """
-        Return True on successful domain destroy.
-
-        Immediately terminate the domain domain-id. The equivalent of ripping
-        the power cord out on a physical machine.
-
-        @param name: VM name
-        """
-        if self.virsh_domstate(name) == 'shut off':
-            return True
-        status = commands.getstatus("virsh destroy %s" % (name))
-        if status == 0:
-            if self.wait_for_guest_shutdown(name):
-                logging.debug("Destroyed VM %s", name)
-                return True
-            else:
-                return False
-        else:
-            logging.error("Destroy VM %s failed", name)
-            return False
-
-
-    def virsh_undefine(self, name):
-        """
-        Return True on successful domain undefine.
-
-        Undefine the configuration for an inactive domain. The domain should
-        be shutdown or destroyed before calling this method.
-
-        @param name: VM name
-        """
-        status = commands.getstatus("virsh undefine %s" % name)
-        if status == 0:
-            logging.debug("undefined VM %s", name)
-            return True
-        else:
-            logging.error("undefine VM %s failed", name)
-            return False
-
-
-    def wait_for_guest_shutdown(self, name, count=60):
+    def wait_for_guest_shutdown(self, count=60):
         """
         Return True on successful domain shutdown.
 
         Wait for a domain to shutdown, libvirt does not block on domain
         shutdown so we need to watch for successful completion.
 
-        @param name: VM name
-        @param name: Optional timeout value
+        @param count: Optional timeout value
         """
         timeout = count
         while count > 0:
             # check every 5 seconds
             if count % 5 == 0:
-                if self.virsh_is_dead(name):
+                if self.vir_is_dead():
                     logging.debug("Shutdown took %d seconds", timeout - count)
                     return True
             count -= 1
@@ -306,21 +127,20 @@ class VM(virt_vm.BaseVM):
         return False
 
 
-    def wait_for_guest_to_start(self, name, count=60):
+    def wait_for_guest_to_start(self, count=60):
         """
         Return True on successful domain start.
 
         Wait for a domain to start, libvirt does not block on domain
         start so we need to watch for successful completion.
-
-        @param name: VM name
-        @param name: Optional timeout value
+        
+        @param count: Optional timeout value
         """
         timeout = count
         while count > 0:
             # check every 5 seconds
             if count % 5 == 0:
-                if self.virsh_is_alive(name):
+                if self.vir_is_alive():
                     session = self.wait_for_login(timeout=60)
                     session.close()
                     logging.debug("Start took %d seconds", timeout - count)
@@ -329,33 +149,6 @@ class VM(virt_vm.BaseVM):
             time.sleep(1)
             logging.debug("Waiting for guest to start %d", count)
         return False
-
-
-    def remove_vm(self, name):
-        """
-        Return True after forcefully removing a domain if it exists.
-
-        @param name: VM name
-        """
-        if self.vm_exists(name):
-            if self.virsh_is_alive(name):
-                self.virsh_destroy(name)
-            self.virsh_undefine(name)
-        return True
-
-
-    def vm_exists(self, name):
-        """
-        Return True if a domain exits.
-
-        @param name: VM name
-        """
-        status = commands.getstatus("virsh domstate %s" % (name))
-        if status == 0:
-            return True
-        else:
-            logging.warning("VM %s does not exist", name)
-            return False
 
 
     def clone(self, name=None, params=None, root_dir=None, address_cache=None,
@@ -371,7 +164,7 @@ class VM(virt_vm.BaseVM):
         @param root_dir: Optional new base directory for relative filenames
         @param address_cache: A dict that maps MAC addresses to IP addresses
         @param copy_state: If True, copy the original VM's state to the clone.
-                Mainly useful for make_qemu_command().
+                Mainly useful for make_virt_install_command().
         """
         if name is None:
             name = self.name
@@ -759,7 +552,7 @@ class VM(virt_vm.BaseVM):
     def create(self, name=None, params=None, root_dir=None, timeout=5.0,
                migration_mode=None, mac_source=None):
         """
-        Start the VM by running a qemu command.
+        Start the VM by running a virt_install command.
         All parameters are optional. If name, params or root_dir are not
         supplied, the respective values stored as class attributes are used.
 
@@ -773,8 +566,7 @@ class VM(virt_vm.BaseVM):
         @param mac_source: A VM object from which to copy MAC addresses. If not
                 specified, new addresses will be generated.
 
-        @raise VMCreateError: If qemu terminates unexpectedly
-        @raise VMKVMInitError: If KVM initialization fails
+        @raise VMCreateError: If virt_install terminates unexpectedly
         @raise VMHugePageError: If hugepage initialization fails
         @raise VMImageMissingError: If a CD image is missing
         @raise VMHashMismatchError: If a CD image hash has doesn't match the
@@ -884,22 +676,22 @@ class VM(virt_vm.BaseVM):
                     virt_utils.generate_mac_address(self.instance, vlan)
 
             # Make qemu command
-            qemu_command = self.__make_libvirt_command()
+            virt_install_command = self.__make_libvirt_command()
 
             # Add migration parameters if required
             if migration_mode == "tcp":
                 self.migration_port = virt_utils.find_free_port(5200, 6000)
-                qemu_command += " -incoming tcp:0:%d" % self.migration_port
+                virt_install_command += " -incoming tcp:0:%d" % self.migration_port
             elif migration_mode == "unix":
                 self.migration_file = "/tmp/migration-unix-%s" % self.instance
-                qemu_command += " -incoming unix:%s" % self.migration_file
+                virt_install_command += " -incoming unix:%s" % self.migration_file
             elif migration_mode == "exec":
                 self.migration_port = virt_utils.find_free_port(5200, 6000)
-                qemu_command += (' -incoming "exec:nc -l %s"' %
+                virt_install_command += (' -incoming "exec:nc -l %s"' %
                                  self.migration_port)
 
-            logging.info("Running libvirt command:\n%s", qemu_command)
-            self.process = aexpect.run_bg(qemu_command, None, logging.info,
+            logging.info("Running virt_install command:\n%s", virt_install_command)
+            self.process = aexpect.run_bg(virt_install_command, None, logging.info,
                                           "(libvirt) ")
 
             # Time needed for the domain to be created
@@ -931,52 +723,25 @@ class VM(virt_vm.BaseVM):
         @param free_mac_addresses: If True, the MAC addresses used by the VM
                 will be freed.
         """
-        try:
-            # Is it already dead?
-            if self.is_dead():
-                return
+        # Is it already dead?
+        if self.is_dead():
+            return
 
-            logging.debug("Destroying VM")
-            if gracefully and self.params.get("shutdown_command"):
-                # Try to destroy with shell command
-                logging.debug("Trying to shutdown VM with shell command")
-                try:
-                    session = self.login()
-                except (virt_utils.LoginError, virt_vm.VMError), e:
-                    logging.debug(e)
-                else:
-                    try:
-                        # Send the shutdown command
-                        session.sendline(self.params.get("shutdown_command"))
-                        logging.debug("Shutdown command sent; waiting for VM "
-                                      "to go down...")
-                        if virt_utils.wait_for(self.is_dead, 60, 1, 1):
-                            logging.debug("VM is down")
-                            return
-                    finally:
-                        session.close()
+        logging.debug("Destroying VM")
+        if gracefully == True:
+            self.dom.shutdown()
+          
+        if virt_utils.wait_for(self.is_dead, 60, 1, 1):
+            logging.debug("VM is down")
+            return
+  
+        self.dom.destroy()
 
-            self.virsh_destroy(self.name)
-            self.virsh_undefine(self.name)
+        if virt_utils.wait_for(self.is_dead, 5, 0.5, 0.5):
+            logging.debug("VM is down")
+            return
 
-        finally:
-            if self.serial_console:
-                self.serial_console.close()
-            for f in ([self.get_testlog_filename(),
-                       self.get_serial_console_filename()]):
-                try:
-                    os.unlink(f)
-                except OSError:
-                    pass
-            if hasattr(self, "migration_file"):
-                try:
-                    os.unlink(self.migration_file)
-                except OSError:
-                    pass
-            if free_mac_addresses:
-                num_nics = len(self.params.objects("nics"))
-                for vlan in range(num_nics):
-                    self.free_mac_address(vlan)
+        logging.error("Can't destroy domain")
 
 
     def get_address(self, index=0):
@@ -1009,56 +774,7 @@ class VM(virt_vm.BaseVM):
                 raise virt_vm.VMAddressVerificationError(mac, ip)
             return ip
         else:
-            return "localhost"
-
-
-    def get_port(self, port, nic_index=0):
-        """
-        Return the port in host space corresponding to port in guest space.
-
-        @param port: Port number in host space.
-        @param nic_index: Index of the NIC.
-        @return: If port redirection is used, return the host port redirected
-                to guest port port. Otherwise return port.
-        @raise VMPortNotRedirectedError: If an unredirected port is requested
-                in user mode
-        """
-        nic_name = self.params.objects("nics")[nic_index]
-        nic_params = self.params.object_params(nic_name)
-        if nic_params.get("nic_mode") == "tap":
-            return port
-        else:
-            try:
-                return self.redirs[port]
-            except KeyError:
-                raise virt_vm.VMPortNotRedirectedError(port)
-
-
-    def get_ifname(self, nic_index=0):
-        """
-        Return the ifname of a tap device associated with a NIC.
-
-        @param nic_index: Index of the NIC
-        """
-        nics = self.params.objects("nics")
-        nic_name = nics[nic_index]
-        nic_params = self.params.object_params(nic_name)
-        if nic_params.get("nic_ifname"):
-            return nic_params.get("nic_ifname")
-        else:
-            return "t%d-%s" % (nic_index, self.instance[-11:])
-
-
-    def get_virsh_mac_address(self, nic_index):
-        thexml = self.virsh_dumpxml(self.name)
-        dom = minidom.parseString(thexml)
-        count = 0
-        for node in dom.getElementsByTagName('interface'):
-            source = node.childNodes[1]
-            x = source.attributes["address"]
-            if nic_index == count:
-                return x.value
-            count += 1
+            return "localhost"    
 
 
     def get_mac_address(self, nic_index=0):
@@ -1071,14 +787,20 @@ class VM(virt_vm.BaseVM):
         """
         nic_name = self.params.objects("nics")[nic_index]
         nic_params = self.params.object_params(nic_name)
-        if nic_params.get("vm_type") == 'libvirt':
-            if self.params.objects("type")[0] == 'unattended_install':
-                mac = virt_utils.get_mac_address(self.instance, nic_index)
-            else:
-                mac = self.get_virsh_mac_address(nic_index)
+        if self.params.objects("type")[0] == 'unattended_install':
+            mac = virt_utils.get_mac_address(self.instance, nic_index)
         else:
-            mac = (nic_params.get("nic_mac") or
-                virt_utils.get_mac_address(self.instance, nic_index))
+            thexml = self.domain.XMLDesc(libvirt.VIR_DOMAIN_XML_UPDATE_CPU)
+            dom = minidom.parseString(thexml)
+            count = 0
+            for node in dom.getElementsByTagName('interface'):
+                source = node.childNodes[1]
+                x = source.attributes["address"]
+                if nic_index == count:
+                    mac = x.value
+                    return 
+                count += 1
+
         if not mac:
             raise virt_vm.VMMACAddressMissingError(nic_index)
         return mac
@@ -1183,9 +905,7 @@ class VM(virt_vm.BaseVM):
 
 
     def screendump(self, filename, debug=False):
-        if debug:
-            logging.debug("Requesting screenshot %s" % filename)
-        return self.virsh_screenshot(self.name, filename)
+        pass
 
 
     def send_key(self):
@@ -1206,3 +926,12 @@ class VM(virt_vm.BaseVM):
 
     def save_to_file(self):
         pass
+
+
+    def domain(self):
+        if self.dom is not None:
+            return self.dom
+
+        self.dom = self.connect.lookupByName(self.name)
+        if self.dom is None:
+            raise libvirt.libvirtError('Domaint "%s" not found' % self.name)
