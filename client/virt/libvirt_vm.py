@@ -79,7 +79,7 @@ class VM(virt_vm.BaseVM):
         @raise VMDeadError: If the VM is dead
         """
         try:
-            virt_vm.BaseVM.verify_alive(self)
+            self.is_alive()
         except virt_vm.VMDeadError:
             raise virt_vm.VMDeadError(self.process.get_status(),
                                       self.process.get_output())
@@ -103,52 +103,6 @@ class VM(virt_vm.BaseVM):
         Return True if VM is dead.
         """
         return not self.is_alive()
-
-
-    def wait_for_guest_shutdown(self, count=60):
-        """
-        Return True on successful domain shutdown.
-
-        Wait for a domain to shutdown, libvirt does not block on domain
-        shutdown so we need to watch for successful completion.
-
-        @param count: Optional timeout value
-        """
-        timeout = count
-        while count > 0:
-            # check every 5 seconds
-            if count % 5 == 0:
-                if self.vir_is_dead():
-                    logging.debug("Shutdown took %d seconds", timeout - count)
-                    return True
-            count -= 1
-            time.sleep(1)
-            logging.debug("Waiting for guest to shutdown %d", count)
-        return False
-
-
-    def wait_for_guest_to_start(self, count=60):
-        """
-        Return True on successful domain start.
-
-        Wait for a domain to start, libvirt does not block on domain
-        start so we need to watch for successful completion.
-        
-        @param count: Optional timeout value
-        """
-        timeout = count
-        while count > 0:
-            # check every 5 seconds
-            if count % 5 == 0:
-                if self.vir_is_alive():
-                    session = self.wait_for_login(timeout=60)
-                    session.close()
-                    logging.debug("Start took %d seconds", timeout - count)
-                    return True
-            count -= 1
-            time.sleep(1)
-            logging.debug("Waiting for guest to start %d", count)
-        return False
 
 
     def clone(self, name=None, params=None, root_dir=None, address_cache=None,
@@ -868,7 +822,7 @@ class VM(virt_vm.BaseVM):
 
         @param session: A shell session object or None.
         @param method: Reboot method.  Can be "shell" (send a shell reboot
-                command).
+                command) or "libvirt" (call libvirt function).
         @param nic_index: Index of NIC to access in the VM, when logging in
                 after rebooting.
         @param timeout: Time to wait for login to succeed (after rebooting).
@@ -882,7 +836,7 @@ class VM(virt_vm.BaseVM):
         if method == "shell":
             session.sendline(self.params.get("reboot_command"))
         else:
-            raise virt_vm.VMRebootError("Unknown reboot method: %s" % method)
+            self.domain.reboot()
 
         error.context("waiting for guest to go down", logging.info)
         if not virt_utils.wait_for(lambda:
@@ -917,11 +871,17 @@ class VM(virt_vm.BaseVM):
 
 
     def pause(self):
-        pass
+        """
+        Pause the VM operation.
+        """
+        self.domain.suspend()
 
 
     def resume(self):
-        pass
+        """
+        Resume the VM operation in case it's stopped.
+        """
+        self.domain.resume()
 
 
     def save_to_file(self):
