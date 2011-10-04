@@ -66,9 +66,7 @@ class VM(virt_vm.BaseVM):
         self.root_dir = root_dir
         self.address_cache = address_cache
 
-        self.connect = libvirt.open(None)
-        if self.connect is None:
-            raise libvirt.libvirtError('Failed connect to hypervisor')
+        self.connect = None
         self.dom = None
 
 
@@ -891,6 +889,11 @@ class VM(virt_vm.BaseVM):
     def domain(self):
         if self.dom is not None:
             return self.dom
+        
+        if self.connect is None:
+            self.connect = libvirt.open(None)
+            if self.connect is None:
+                raise libvirt.libvirtError('Failed connect to hypervisor')
 
         self.dom = self.connect.lookupByName(self.name)
         if self.dom is None:

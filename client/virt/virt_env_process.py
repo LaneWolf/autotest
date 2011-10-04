@@ -79,33 +79,19 @@ def preprocess_vm(test, params, env, name):
                       "incoming migration mode")
         start_vm = True
     elif params.get("start_vm") == "yes":
-        # need to deal with libvirt VM differently than qemu
-        if vm_type == 'libvirt':
-            if not vm.virsh_is_alive(name):
-                logging.debug("VM is not alive; starting it...")
-                start_vm = True
-        else:
-            if not vm.is_alive():
-                logging.debug("VM is not alive, starting it")
-                start_vm = True
-            if vm.needs_restart(name=name, params=params, basedir=test.bindir):
-                logging.debug("Current VM specs differ from requested one; "
-                              "restarting it")
-                start_vm = True
+        if not vm.is_alive():
+            logging.debug("VM is not alive, starting it")
+            start_vm = True
+        if vm.needs_restart(name=name, params=params, basedir=test.bindir):
+            logging.debug("Current VM specs differ from requested one; "
+                          "restarting it")
+            start_vm = True
 
     if start_vm:
-        if vm_type != 'libvirt':
-            # Start the VM (or restart it if it's already up)
-            if params.get("type") == "unattended_install":
-              vm.create(name, params, test.bindir,
-                      migration_mode=params.get("migration_mode"))
-        else:
-            vm.params = params
-            if vm_type == 'libvirt':
-                vm.virsh_start(name)
-
-    if vm_type == 'libvirt':
-        vm.params = params
+        # Start the VM (or restart it if it's already up)
+        if params.get("type") == "unattended_install":
+          vm.create(name, params, test.bindir,
+                  migration_mode=params.get("migration_mode"))
 
     scrdump_filename = os.path.join(test.debugdir, "pre_%s.ppm" % name)
     try:
