@@ -87,10 +87,10 @@ class VM(virt_vm.BaseVM):
         """
         Return True if VM is alive.
         """
-        if self.domain is None:
+        if self.domain() is None:
             return False
         
-        if self.domain.isActive():
+        if self.domain().isActive():
             return True
         else:
             return Fasle
@@ -742,7 +742,7 @@ class VM(virt_vm.BaseVM):
         if self.params.objects("type")[0] == 'unattended_install':
             mac = virt_utils.get_mac_address(self.instance, nic_index)
         else:
-            thexml = self.domain.XMLDesc(libvirt.VIR_DOMAIN_XML_UPDATE_CPU)
+            thexml = self.domain().XMLDesc(libvirt.VIR_DOMAIN_XML_UPDATE_CPU)
             dom = minidom.parseString(thexml)
             count = 0
             for node in dom.getElementsByTagName('interface'):
@@ -834,7 +834,7 @@ class VM(virt_vm.BaseVM):
         if method == "shell":
             session.sendline(self.params.get("reboot_command"))
         else:
-            self.domain.reboot()
+            self.domain().reboot()
 
         error.context("waiting for guest to go down", logging.info)
         if not virt_utils.wait_for(lambda:
@@ -872,14 +872,14 @@ class VM(virt_vm.BaseVM):
         """
         Pause the VM operation.
         """
-        self.domain.suspend()
+        self.domain().suspend()
 
 
     def resume(self):
         """
         Resume the VM operation in case it's stopped.
         """
-        self.domain.resume()
+        self.domain().resume()
 
 
     def save_to_file(self):
