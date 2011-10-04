@@ -894,7 +894,10 @@ class VM(virt_vm.BaseVM):
             self.connect = libvirt.open(None)
             if self.connect is None:
                 raise libvirt.libvirtError('Failed connect to hypervisor')
+                return self.dom
 
         self.dom = self.connect.lookupByName(self.name)
         if self.dom is None:
             raise libvirt.libvirtError('Domaint "%s" not found' % self.name)
+        
+        return self.dom
