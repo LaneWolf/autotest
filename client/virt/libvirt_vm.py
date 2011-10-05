@@ -1,7 +1,7 @@
 """
-Utility classes and functions to handle Virtual Machine creation using qemu.
+Utility classes and functions to handle Virtual Machine creation using libvirt.
 
-@copyright: 2008-2009 Red Hat Inc.
+@copyright: 2008-2011 Red Hat Inc.
 """
 
 import time, os, logging, fcntl, re, commands
@@ -9,8 +9,15 @@ from autotest_lib.client.common_lib import error
 from autotest_lib.client.bin import utils
 from xml.dom import minidom
 import virt_utils, virt_vm, aexpect
-import libvirt
 
+"""
+Import system libvirt module not to conflict existing module
+"""
+import imp
+from distutils.sysconfig import get_python_lib
+lm_fp, lm_pathname, lm_description = imp.find_module('libvirt', [get_python_lib(plat_specific = True)])
+if lm_fp is not None:
+    sLibvirt = imp.load_module('libvirt', lm_fp, lm_pathname, lm_description)
 
 def libvirtd_restart():
     """
@@ -742,7 +749,7 @@ class VM(virt_vm.BaseVM):
         if self.params.objects("type")[0] == 'unattended_install':
             mac = virt_utils.get_mac_address(self.instance, nic_index)
         else:
-            thexml = self.domain().XMLDesc(libvirt.VIR_DOMAIN_XML_UPDATE_CPU)
+            thexml = self.domain().XMLDesc(sLibvirt.VIR_DOMAIN_XML_UPDATE_CPU)
             dom = minidom.parseString(thexml)
             count = 0
             for node in dom.getElementsByTagName('interface'):
@@ -891,13 +898,13 @@ class VM(virt_vm.BaseVM):
             return self.dom
         
         if self.connect is None:
-            self.connect = libvirt.open(None)
+            self.connect = sLibvirt.open(None)
             if self.connect is None:
-                raise libvirt.libvirtError('Failed connect to hypervisor')
+                raise sLibvirt.libvirtError('Failed connect to hypervisor')
                 return self.dom
 
         self.dom = self.connect.lookupByName(self.name)
         if self.dom is None:
-            raise libvirt.libvirtError('Domaint "%s" not found' % self.name)
+            raise sLibvirt.libvirtError('Domaint "%s" not found' % self.name)
         
         return self.dom
