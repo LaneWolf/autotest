@@ -9,15 +9,21 @@ from autotest_lib.client.common_lib import error
 from autotest_lib.client.bin import utils
 from xml.dom import minidom
 import virt_utils, virt_vm, aexpect
+from _mysql_exceptions import Error
 
 """
 Import system libvirt module not to conflict existing module
 """
-import imp
-from distutils.sysconfig import get_python_lib
-lm_fp, lm_pathname, lm_description = imp.find_module('libvirt', [get_python_lib(plat_specific = True)])
-if lm_fp is not None:
-    sLibvirt = imp.load_module('libvirt', lm_fp, lm_pathname, lm_description)
+def _import_sys_libvirt():
+    import imp
+    from distutils.sysconfig import get_python_lib
+    lm_fp, lm_pathname, lm_description = imp.find_module('libvirt', [get_python_lib(plat_specific = True)])
+    if lm_fp is not None:
+        return imp.load_module('libvirt', lm_fp, lm_pathname, lm_description)
+    return None
+
+sLibvirt = _import_sys_libvirt()
+
 
 def libvirtd_restart():
     """
@@ -72,9 +78,7 @@ class VM(virt_vm.BaseVM):
         self.params = params
         self.root_dir = root_dir
         self.address_cache = address_cache
-
-        self.connect = None
-        self.dom = None
+        self.monitor = None
 
 
     def verify_alive(self):
@@ -94,13 +98,9 @@ class VM(virt_vm.BaseVM):
         """
         Return True if VM is alive.
         """
-        if self.domain() is None:
-            return False
-        
-        if self.domain().isActive():
+        if self.domain('isActive'):
             return True
-        else:
-            return Fasle
+        return False
 
 
     def is_dead(self):
@@ -203,6 +203,12 @@ class VM(virt_vm.BaseVM):
 
         def add_smp(help, smp):
             return " --vcpu=%s" % smp
+
+        def add_import(help):
+            if has_option(help, "import"):
+                return " --import"
+            else:
+                return ""
 
         def add_location(help, location):
             #return " --location %s" % location
@@ -374,6 +380,8 @@ class VM(virt_vm.BaseVM):
 
         if location:
             virt_install_cmd += add_location(help, location)
+        else:
+            virt_install_cmd += add_import(help)
 
         if params.get("display") == "vnc":
             if params.get("vnc_port"):
@@ -534,6 +542,14 @@ class VM(virt_vm.BaseVM):
                 requested
         @raise VMPAError: If no PCI assignable devices could be assigned
         """
+        if self.domain():
+            if self.is_dead():
+                if self.domain("create") == -1:
+                    logging.error("Cannot start domain %s" % self.name)
+            else:
+                self.reboot()
+            return
+
         error.context("creating '%s'" % self.name)
         self.destroy(free_mac_addresses=False)
 
@@ -684,23 +700,31 @@ class VM(virt_vm.BaseVM):
         """
         # Is it already dead?
         if self.is_dead():
-            return
+            return True
 
         logging.debug("Destroying VM")
         if gracefully == True:
-            self.dom.shutdown()
-          
+            self.domain("shutdown")
+
         if virt_utils.wait_for(self.is_dead, 60, 1, 1):
             logging.debug("VM is down")
-            return
-  
-        self.dom.destroy()
+            return True
+
+        self.domain("destroy")
 
         if virt_utils.wait_for(self.is_dead, 5, 0.5, 0.5):
             logging.debug("VM is down")
-            return
+            return True
 
         logging.error("Can't destroy domain")
+        return False
+
+
+    def remove_vm(self):
+        if self.destroy():
+            if self.domain("undefine") == 0:
+                return True
+        return False
 
 
     def get_address(self, index=0):
@@ -733,7 +757,29 @@ class VM(virt_vm.BaseVM):
                 raise virt_vm.VMAddressVerificationError(mac, ip)
             return ip
         else:
-            return "localhost"    
+            return "localhost"
+
+
+    def get_port(self, port, nic_index=0):
+        """
+        Return the port in host space corresponding to port in guest space.
+
+        @param port: Port number in host space.
+        @param nic_index: Index of the NIC.
+        @return: If port redirection is used, return the host port redirected
+                to guest port port. Otherwise return port.
+        @raise VMPortNotRedirectedError: If an unredirected port is requested
+                in user mode
+        """
+        nic_name = self.params.objects("nics")[nic_index]
+        nic_params = self.params.object_params(nic_name)
+        if nic_params.get("nic_mode") == "tap":
+            return port
+        else:
+            try:
+                return self.redirs[port]
+            except KeyError:
+                raise virt_vm.VMPortNotRedirectedError(port)
 
 
     def get_mac_address(self, nic_index=0):
@@ -749,16 +795,17 @@ class VM(virt_vm.BaseVM):
         if self.params.objects("type")[0] == 'unattended_install':
             mac = virt_utils.get_mac_address(self.instance, nic_index)
         else:
-            thexml = self.domain().XMLDesc(sLibvirt.VIR_DOMAIN_XML_UPDATE_CPU)
-            dom = minidom.parseString(thexml)
-            count = 0
-            for node in dom.getElementsByTagName('interface'):
-                source = node.childNodes[1]
-                x = source.attributes["address"]
-                if nic_index == count:
-                    mac = x.value
-                    return 
-                count += 1
+            if self.domain():
+                thexml = self.domain("XMLDesc", sLibvirt.VIR_DOMAIN_XML_INACTIVE)
+                dom = minidom.parseString(thexml)
+                count = 0
+                for node in dom.getElementsByTagName('interface'):
+                    source = node.childNodes[1]
+                    x = source.attributes["address"]
+                    if nic_index == count:
+                        mac = x.value
+                        break
+                    count += 1
 
         if not mac:
             raise virt_vm.VMMACAddressMissingError(nic_index)
@@ -841,7 +888,8 @@ class VM(virt_vm.BaseVM):
         if method == "shell":
             session.sendline(self.params.get("reboot_command"))
         else:
-            self.domain().reboot()
+            #Used zero value, because this flag is for now unused
+            self.domain("reboot", 0)
 
         error.context("waiting for guest to go down", logging.info)
         if not virt_utils.wait_for(lambda:
@@ -879,32 +927,42 @@ class VM(virt_vm.BaseVM):
         """
         Pause the VM operation.
         """
-        self.domain().suspend()
+        self.domain("suspend")
 
 
     def resume(self):
         """
         Resume the VM operation in case it's stopped.
         """
-        self.domain().resume()
+        self.domain("resume")
 
 
     def save_to_file(self):
         pass
 
 
-    def domain(self):
-        if self.dom is not None:
-            return self.dom
-        
-        if self.connect is None:
-            self.connect = sLibvirt.open(None)
-            if self.connect is None:
-                raise sLibvirt.libvirtError('Failed connect to hypervisor')
-                return self.dom
+    def domain(self, func = None, params = None):
+        try:
+            conn = sLibvirt.open(None)
+        except:
+            logging.error('Failed connect to hypervisor')
+            return False
 
-        self.dom = self.connect.lookupByName(self.name)
-        if self.dom is None:
-            raise sLibvirt.libvirtError('Domaint "%s" not found' % self.name)
-        
-        return self.dom
+        try:
+            dom = conn.lookupByName(self.name)
+        except:
+            logging.debug("Domain %s not found" % self.name)
+            conn.close()
+            return False
+
+        if func is None:
+            conn.close()
+            return True
+        else:
+            tmp_func = eval('dom.'+func)
+            if params is None:
+                ret = tmp_func()
+            else:
+                ret = tmp_func(params)
+            conn.close()
+            return ret

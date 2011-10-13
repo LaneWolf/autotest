@@ -66,9 +66,8 @@ def preprocess_vm(test, params, env, name):
         logging.debug("'force_remove_vm' specified; removing VM...")
         remove_vm = True
 
-    if remove_vm and not vm.remove_vm(name):
+    if remove_vm and not vm.remove_vm():
         raise error.TestError("Could not remove VM")
-
     start_vm = False
 
     if params.get("restart_vm") == "yes":
@@ -89,8 +88,7 @@ def preprocess_vm(test, params, env, name):
 
     if start_vm:
         # Start the VM (or restart it if it's already up)
-        if params.get("type") == "unattended_install":
-          vm.create(name, params, test.bindir,
+        vm.create(name, params, test.bindir,
                   migration_mode=params.get("migration_mode"))
 
     scrdump_filename = os.path.join(test.debugdir, "pre_%s.ppm" % name)
