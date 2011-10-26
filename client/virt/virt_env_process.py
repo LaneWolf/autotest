@@ -58,7 +58,7 @@ def preprocess_vm(test, params, env, name):
             vm = kvm_vm.VM(name, params, test.bindir, env.get("address_cache"))
         if vm_type == 'libvirt':
             vm = libvirt_vm.VM(name, params, test.bindir, env.get("address_cache"))
-        if vm_type == 'libvirt-api':
+        if vm_type == 'libvirt_api':
             vm = libvirt_api_vm.VM(name, params, test.bindir, env.get("address_cache"))
         env.register_vm(name, vm)
 
