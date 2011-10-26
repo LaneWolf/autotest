@@ -110,7 +110,7 @@ def barrier_2(vm, words, params, debug_dir, data_scrdump_filename,
             whole_image_md5sum not in prev_whole_image_md5sums[:1]):
             try:
                 os.makedirs(history_dir)
-            except:
+            except Exception:
                 pass
             history_scrdump_filename = os.path.join(history_dir,
                     "scrdump-step_%s-%s.jpg" % (current_step_num,
@@ -192,7 +192,7 @@ def run_steps(test, params, env):
     steps_filename = params.get("steps")
     if not steps_filename:
         raise error.TestError("Steps filename not specified")
-    steps_filename = virt_utils.get_path(test.bindir, steps_filename)
+    steps_filename = virt_utils.get_path(test.virtdir, steps_filename)
     if not os.path.exists(steps_filename):
         raise error.TestError("Steps file not found: %s" % steps_filename)
 

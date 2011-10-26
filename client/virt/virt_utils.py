@@ -6,9 +6,10 @@ KVM test utility functions.
 
 import time, string, random, socket, os, signal, re, logging, commands, cPickle
 import fcntl, shelve, ConfigParser, threading, sys, UserDict, inspect, tarfile
-import struct, shutil
+import struct, shutil, glob
 from autotest_lib.client.bin import utils, os_dep
 from autotest_lib.client.common_lib import error, logging_config
+from autotest_lib.client.common_lib import logging_manager
 import rss_client, aexpect
 try:
     import koji
@@ -431,7 +432,7 @@ def pid_exists(pid):
     try:
         os.kill(pid, 0)
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -444,7 +445,7 @@ def safe_kill(pid, signal):
     try:
         os.kill(pid, signal)
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -710,7 +711,7 @@ def remote_login(client, host, port, username, password, prompt, linesep="\n",
     session = aexpect.ShellSession(cmd, linesep=linesep, prompt=prompt)
     try:
         _remote_login(session, username, password, prompt, timeout)
-    except:
+    except Exception:
         session.close()
         raise
     if log_filename:
@@ -1419,7 +1420,7 @@ class Thread(threading.Thread):
         try:
             try:
                 self._retval = self._target(*self._args, **self._kwargs)
-            except:
+            except Exception:
                 self._e = sys.exc_info()
                 raise
         finally:
@@ -1749,7 +1750,7 @@ class PciAssignable(object):
                     logging.error("Failed to release device %s to host", pci_id)
                 else:
                     logging.info("Released device %s successfully", pci_id)
-        except:
+        except Exception:
             return
 
 
@@ -1917,7 +1918,7 @@ class KojiClient(object):
                 koji_command = command
                 break
             else:
-                koji_command_basename = os.path.basename(koji_command)
+                koji_command_basename = os.path.basename(command)
                 try:
                     koji_command = os_dep.command(koji_command_basename)
                     break
@@ -2342,6 +2343,44 @@ class KojiPkgSpec(object):
         else:
             return ('Invalid package specification: %s' %
                     self.describe_invalid())
+
+
+    def to_text(self):
+        '''
+        Return the textual representation of this package spec
+
+        The output should be consumable by parse() and produce the same
+        package specification.
+
+        We find that it's acceptable to put the currently set default tag
+        as the package explicit tag in the textual definition for completeness.
+
+        @returns: package specification in a textual representation
+        '''
+        default_tag = get_default_koji_tag()
+
+        if self.build:
+            if self.subpackages:
+                return "%s:%s" % (self.build, ",".join(self.subpackages))
+            else:
+                return "%s" % self.build
+
+        elif self.tag:
+            if self.subpackages:
+                return "%s:%s:%s" % (self.tag, self.package,
+                                     ",".join(self.subpackages))
+            else:
+                return "%s:%s" % (self.tag, self.package)
+
+        elif default_tag is not None:
+            # neither build or tag is set, try default_tag as a fallback
+            if self.subpackages:
+                return "%s:%s:%s" % (default_tag, self.package,
+                                     ",".join(self.subpackages))
+            else:
+                return "%s:%s" % (default_tag, self.package)
+        else:
+            raise ValueError, 'neither build or tag is set'
 
 
     def __repr__(self):
@@ -2888,6 +2927,24 @@ class GnuSourceBuildInvalidSource(Exception):
     pass
 
 
+class GnuSourceBuildFailed(Exception):
+    '''
+    Exception raised when building with parallel jobs fails
+
+    This servers as feedback for code using GnuSourceBuildHelper
+    '''
+    pass
+
+
+class GnuSourceBuildParallelFailed(Exception):
+    '''
+    Exception raised when building with parallel jobs fails
+
+    This servers as feedback for code using GnuSourceBuildHelper
+    '''
+    pass
+
+
 class GnuSourceBuildHelper(object):
     '''
     Handles software installation of GNU-like source code
@@ -3018,15 +3075,53 @@ class GnuSourceBuildHelper(object):
         utils.system(configure_command)
 
 
-    def make(self):
+    def make_parallel(self):
         '''
         Runs "make" using the correct number of parallel jobs
         '''
         parallel_make_jobs = utils.count_cpus()
         make_command = "make -j %s" % parallel_make_jobs
-        logging.info("Running make on build dir")
+        logging.info("Running parallel make on build dir")
         os.chdir(self.build_dir)
         utils.system(make_command)
+
+
+    def make_non_parallel(self):
+        '''
+        Runs "make", using a single job
+        '''
+        os.chdir(self.build_dir)
+        utils.system("make")
+
+
+    def make_clean(self):
+        '''
+        Runs "make clean"
+        '''
+        os.chdir(self.build_dir)
+        utils.system("make clean")
+
+
+    def make(self, failure_feedback=True):
+        '''
+        Runs a parallel make, falling back to a single job in failure
+
+        @param failure_feedback: return information on build failure by raising
+                                 the appropriate exceptions
+        @raise: GnuSourceBuildParallelFailed if parallel build fails, or
+                GnuSourceBuildFailed if single job build fails
+        '''
+        try:
+            self.make_parallel()
+        except error.CmdError:
+            try:
+                self.make_clean()
+                self.make_non_parallel()
+            except error.CmdError:
+                if failure_feedback:
+                    raise GnuSourceBuildFailed
+            if failure_feedback:
+                raise GnuSourceBuildParallelFailed
 
 
     def make_install(self):
@@ -3095,6 +3190,11 @@ class GnuSourceBuildParamHelper(GnuSourceBuildHelper):
         self.prefix = self.install_prefix
         self.configure_options = configure_options
         self.include_pkg_config_path()
+
+        # Support the install_debug_info feature, that automatically
+        # adds/keeps debug information on generated libraries/binaries
+        if not self.params.get("install_debug_info", "yes") == "no":
+            self.enable_debug_symbols()
 
 
 def install_host_kernel(job, params):
@@ -3287,3 +3387,171 @@ def if_set_macaddress(ifname, mac):
         logging.info(e)
         raise HwAddrSetError(ifname, mac)
     ctrl_sock.close()
+
+
+def check_iso(url, destination, hash):
+    """
+    Verifies if ISO that can be find on url is on destination with right hash.
+
+    This function will verify the SHA1 hash of the ISO image. If the file
+    turns out to be missing or corrupted, let the user know we can download it.
+
+    @param url: URL where the ISO file can be found.
+    @param destination: Directory in local disk where we'd like the iso to be.
+    @param hash: SHA1 hash for the ISO image.
+    """
+    file_ok = False
+    if not destination:
+        os.makedirs(destination)
+    iso_path = os.path.join(destination, os.path.basename(url))
+    if not os.path.isfile(iso_path):
+        logging.warning("File %s not found", iso_path)
+        logging.warning("Expected SHA1 sum: %s", hash)
+        answer = utils.ask("Would you like to download it from %s?" % url)
+        if answer == 'y':
+            try:
+                utils.unmap_url_cache(destination, url, hash, method="sha1")
+                file_ok = True
+            except EnvironmentError, e:
+                logging.error(e)
+        else:
+            logging.warning("Missing file %s", iso_path)
+            logging.warning("Please download it or put an exsiting copy on the "
+                            "appropriate location")
+            return
+    else:
+        logging.info("Found %s", iso_path)
+        logging.info("Expected SHA1 sum: %s", hash)
+        answer = utils.ask("Would you like to check %s? It might take a while" %
+                           iso_path)
+        if answer == 'y':
+            try:
+                utils.unmap_url_cache(destination, url, hash, method="sha1")
+                file_ok = True
+            except EnvironmentError, e:
+                logging.error(e)
+        else:
+            logging.info("File %s present, but chose to not verify it",
+                         iso_path)
+            return
+
+    if file_ok:
+        logging.info("%s present, with proper checksum", iso_path)
+
+
+def virt_test_assistant(test_name, test_dir, base_dir, default_userspace_paths,
+                        check_modules, online_docs_url):
+    """
+    Common virt test assistant module.
+
+    @param test_name: Test name, such as "kvm".
+    @param test_dir: Path with the test directory.
+    @param base_dir: Base directory used to hold images and isos.
+    @param default_userspace_paths: Important programs for a successful test
+            execution.
+    @param check_modules: Whether we want to verify if a given list of modules
+            is loaded in the system.
+    @param online_docs_url: URL to an online documentation system, such as an
+            wiki page.
+    """
+    logging_manager.configure_logging(VirtLoggingConfig(), verbose=True)
+    logging.info("%s test config helper", test_name)
+    step = 0
+
+    logging.info("")
+    step += 1
+    logging.info("%d - Verifying directories (check if the directory structure "
+                 "expected by the default test config is there)", step)
+    sub_dir_list = ["images", "isos", "steps_data"]
+    for sub_dir in sub_dir_list:
+        sub_dir_path = os.path.join(base_dir, sub_dir)
+        if not os.path.isdir(sub_dir_path):
+            logging.debug("Creating %s", sub_dir_path)
+            os.makedirs(sub_dir_path)
+        else:
+            logging.debug("Dir %s exists, not creating" %
+                          sub_dir_path)
+    logging.info("")
+    step += 1
+    logging.info("%d - Creating config files from samples (copy the default "
+                 "config samples to actual config files)", step)
+    config_file_list = glob.glob(os.path.join(test_dir, "*.cfg.sample"))
+    for config_file in config_file_list:
+        src_file = config_file
+        dst_file = config_file.rstrip(".sample")
+        if not os.path.isfile(dst_file):
+            logging.debug("Creating config file %s from sample", dst_file)
+            shutil.copyfile(src_file, dst_file)
+        else:
+            logging.debug("Config file %s exists, not touching" % dst_file)
+
+    logging.info("")
+    step += 1
+    logging.info("%s - Verifying iso (make sure we have the OS ISO needed for "
+                 "the default test set)", step)
+
+    iso_name = "Fedora-15-x86_64-DVD.iso"
+    fedora_dir = "pub/fedora/linux/releases/15/Fedora/x86_64/iso"
+    url = os.path.join("http://download.fedoraproject.org/", fedora_dir,
+                       iso_name)
+    hash = "61b3407f62bac22d3a3b2e919c7fc960116012d7"
+    destination = os.path.join(base_dir, 'isos', 'linux')
+    check_iso(url, destination, hash)
+
+    logging.info("")
+    step += 1
+    logging.info("%d - Verifying winutils.iso (make sure we have the utility "
+                 "ISO needed for Windows testing)", step)
+
+    logging.info("In order to run the KVM autotests in Windows guests, we "
+                 "provide you an ISO that this script can download")
+
+    url = "http://people.redhat.com/mrodrigu/kvm/winutils.iso"
+    hash = "02930224756510e383c44c49bffb760e35d6f892"
+    destination = os.path.join(base_dir, 'isos', 'windows')
+    path = os.path.join(destination, iso_name)
+    check_iso(url, destination, hash)
+
+    logging.info("")
+    step += 1
+    logging.info("%d - Checking if the appropriate userspace programs are "
+                 "installed", step)
+    for path in default_userspace_paths:
+        if not os.path.isfile(path):
+            logging.warning("No %s found. You might need to install %s.",
+                            path, os.path.basename(path))
+        else:
+            logging.debug("%s present", path)
+    logging.info("If you wish to change any userspace program path, "
+                 "you will have to modify tests.cfg")
+
+    if check_modules:
+        logging.info("")
+        step += 1
+        logging.info("%d - Checking for modules %s", step,
+                     ",".join(check_modules))
+        for module in check_modules:
+            if not utils.module_is_loaded(module):
+                logging.warning("Module %s is not loaded. You might want to "
+                                "load it", module)
+            else:
+                logging.debug("Module %s loaded", module)
+
+    if online_docs_url:
+        logging.info("")
+        step += 1
+        logging.info("%d - Verify needed packages to get started", step)
+        logging.info("Please take a look at the online documentation: %s",
+                     online_docs_url)
+
+    client_dir = os.path.abspath(os.path.join(test_dir, "..", ".."))
+    autotest_bin = os.path.join(client_dir, 'bin', 'autotest')
+    control_file = os.path.join(test_dir, 'control')
+
+    logging.info("")
+    logging.info("When you are done fixing eventual warnings found, "
+                 "you can run the test using this command line AS ROOT:")
+    logging.info("%s %s", autotest_bin, control_file)
+    logging.info("Autotest prints the results dir, so you can look at DEBUG "
+                 "logs if something went wrong")
+    logging.info("You can also edit the test config files")

@@ -54,13 +54,17 @@ class BaseInstaller(object):
         self.param_key_prefix = '%s_%s' % (self.mode,
                                            self.name)
 
+        # If a installer has a failure that can be worked around, save that
+        self.minor_failure = False
+        self.minor_failure_reason = ''
+
         if test and params:
             self.set_install_params(test, params)
 
 
     def _set_test_dirs(self, test):
         '''
-        Save common test directories paths (srcdir, bindir) as class attributes
+        Save common test directories paths as class attributes
 
         Test variables values are saved here again because it's not possible to
         pickle the test instance inside BaseInstaller due to limitations
@@ -73,13 +77,16 @@ class BaseInstaller(object):
         For reference:
            * bindir = tests/<test>
            * srcdir = tests/<test>/src
+           * resultsdir = results/<job>/<testname.tag>/results
 
         So, for KVM tests, it'd evaluate to:
            * bindir = tests/kvm/
            * srcdir = tests/kvm/src
+           * resultsdir = results/<job>/kvm.<other_variant_names>.build/results
         '''
         self.test_bindir = test.bindir
         self.test_srcdir = test.srcdir
+        self.test_resultsdir = test.resultsdir
 
         #
         # test_bindir is guaranteed to exist, but test_srcdir is not
@@ -127,6 +134,19 @@ class BaseInstaller(object):
             self.save_results = False
 
 
+    def _set_param_install_debug_info(self):
+        '''
+        Sets whether to enable debug information on installed software
+
+        Configuration file parameter: install_debug_info
+        Class attribute set: install_debug_info
+        '''
+        self.install_debug_info = True
+        install_debug_info = self.params.get('install_debug_info', 'no')
+        if install_debug_info == 'no':
+            self.install_debug_info = False
+
+
     def set_install_params(self, test=None, params=None):
         '''
         Called by test to setup parameters from the configuration file
@@ -139,6 +159,7 @@ class BaseInstaller(object):
             self._set_param_load_module()
             self._set_param_module_list()
             self._set_param_save_results()
+            self._set_param_install_debug_info()
 
 
     def _install_phase_cleanup(self):
@@ -359,7 +380,8 @@ class BaseInstaller(object):
 
         self.reload_modules_if_needed()
         if self.save_results:
-            virt_utils.archive_as_tarball(self.srcdir, self.results_dir)
+            virt_utils.archive_as_tarball(self.test_srcdir,
+                                          self.test_resultsdir)
 
 
     def uninstall(self):
@@ -398,6 +420,8 @@ class YumInstaller(BaseInstaller):
         super(YumInstaller, self).set_install_params(test, params)
         os_dep.command("rpm")
         os_dep.command("yum")
+        if self.install_debug_info:
+            os_dep.command("debuginfo-install")
         self.yum_pkgs = eval(params.get("%s_pkgs" % self.param_key_prefix,
                                         "[]"))
 
@@ -411,6 +435,9 @@ class YumInstaller(BaseInstaller):
         if self.yum_pkgs:
             os.chdir(self.test_srcdir)
             utils.system("yum --nogpgcheck -y install %s" %
+                         " ".join(self.yum_pkgs))
+        if self.install_debug_info:
+            utils.system("debuginfo-install --enablerepo='*debuginfo' -y %s" %
                          " ".join(self.yum_pkgs))
 
 
@@ -435,6 +462,37 @@ class KojiInstaller(BaseInstaller):
             virt_utils.set_default_koji_tag(self.tag)
         self.koji_pkgs = eval(params.get("%s_pkgs" % self.param_key_prefix,
                                          "[]"))
+        if self.install_debug_info:
+            self._expand_koji_pkgs_with_debuginfo()
+
+
+    def _expand_koji_pkgs_with_debuginfo(self):
+        '''
+        Include debuginfo RPMs on koji_pkgs
+
+        @returns: None
+        '''
+        logging.debug("Koji package list to be updated with debuginfo pkgs")
+
+        koji_pkgs_with_debug = []
+        for pkg_text in self.koji_pkgs:
+            pkg = virt_utils.KojiPkgSpec(pkg_text)
+            debuginfo_pkg_name = '%s-debuginfo' % pkg.package
+            # if no subpackages are set, then all packages will be installed
+            # so there's no need to manually include debuginfo packages
+            if pkg.subpackages:
+                # make sure we do not include the debuginfo package if
+                # already specified in the list of subpackages
+                if not debuginfo_pkg_name in pkg.subpackages:
+                    pkg.subpackages.append(debuginfo_pkg_name)
+
+            pkg_with_debug_text = pkg.to_text()
+            logging.debug("KojiPkgSpec with debuginfo package added: %s",
+                          pkg_with_debug_text)
+            koji_pkgs_with_debug.append(pkg_with_debug_text)
+
+        # swap current koji_pkgs with on that includes debuginfo pkgs
+        self.koji_pkgs = koji_pkgs_with_debug
 
 
     def _get_rpm_names(self):
@@ -533,6 +591,11 @@ class BaseLocalSourceInstaller(BaseInstaller):
                 self.source_destination, self.install_prefix)
 
 
+    def _install_phase_prepare(self):
+        if self.patch_helper is not None:
+            self.patch_helper.execute()
+
+
     def _install_phase_download(self):
         if self.content_helper is not None:
             self.content_helper.execute()
@@ -540,7 +603,26 @@ class BaseLocalSourceInstaller(BaseInstaller):
 
     def _install_phase_build(self):
         if self.build_helper is not None:
-            self.build_helper.execute()
+            #
+            # Currently there's only one build helper: GnuSourceBuildHelper.
+            # But, still, let's play safe and check if build helper is indeed
+            # an instance of GnuSourceBuildHelper so the code doesnot fail
+            # when other choices of build helpers are introduced
+            #
+            if isinstance(self.build_helper,
+                          virt_utils.GnuSourceBuildHelper):
+                try:
+                    self.build_helper.execute()
+                except virt_utils.GnuSourceBuildParallelFailed:
+                    # Flag minor the failure
+                    self.minor_failure = True
+                    self.minor_failure_reason = "Failed to do parallel build"
+
+                except virt_utils.GnuSourceBuildFailed:
+                    # Failed the current test
+                    raise error.Fail("Failed to build %s" % self.name)
+            else:
+                self.build_helper.execute()
 
 
     def _install_phase_install(self):

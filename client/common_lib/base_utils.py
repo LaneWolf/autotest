@@ -2,7 +2,7 @@
 # Copyright 2008 Google Inc. Released under the GPL v2
 
 import os, pickle, random, re, resource, select, shutil, signal, StringIO
-import socket, struct, subprocess, sys, time, textwrap, urlparse
+import socket, struct, subprocess, sys, time, textwrap, traceback, urlparse
 import warnings, smtplib, logging, urllib2
 from threading import Thread, Event
 try:
@@ -154,29 +154,39 @@ def set_ip_local_port_range(lower, upper):
                    '%d %d\n' % (lower, upper))
 
 
-
-def send_email(mail_from, mail_to, subject, body):
+def send_email(mail_from, mail_to, subject, body,
+               smtp_info={'server':'localhost', 'user':'', 'password':'',
+                          'port':''}):
     """
-    Sends an email via smtp
+    Sends an email via SMTP.
 
-    mail_from: string with email address of sender
-    mail_to: string or list with email address(es) of recipients
-    subject: string with subject of email
-    body: (multi-line) string with body of email
+    @param mail_from: string with email address of sender
+    @param mail_to: string or list with email address(es) of recipients
+    @param subject: string with subject of email
+    @param body: (multi-line) string with body of email
+    @param smtp_info: Dict with smtp server info
+            server: SMTP server
+            user: SMTP user (if any)
+            password: SMTP password (if any)
+            port: SMTP port (if non standard)
     """
     if isinstance(mail_to, str):
         mail_to = [mail_to]
     msg = "From: %s\nTo: %s\nSubject: %s\n\n%s" % (mail_from, ','.join(mail_to),
                                                    subject, body)
     try:
-        mailer = smtplib.SMTP('localhost')
+        # Here if we pass an empty string as port, the default (25) will be
+        # used http://docs.python.org/library/smtplib.html
+        mailer = smtplib.SMTP(smtp_info['server'], smtp_info['port'])
+        if smtp_info['user']:
+            mailer.login(smtp_info['user'], smtp_info['password'])
         try:
             mailer.sendmail(mail_from, mail_to, msg)
         finally:
             mailer.quit()
     except Exception, e:
-        # Emails are non-critical, not errors, but don't raise them
-        print "Sending email failed. Reason: %s" % repr(e)
+        # Emails are non-critical, log the error, don't raise it
+        logging.error("Sending email failed. Reason: %s", repr(e))
 
 
 def read_one_line(filename):
@@ -817,6 +827,15 @@ def _wait_for_commands(bg_jobs, start_time, timeout):
     return True
 
 
+def get_children_pids(ppid):
+    """
+    Get all PIDs of children/threads of parent ppid
+    param ppid: parent PID
+    return: list of PIDs of all children/threads of ppid
+    """
+    return (system_output("ps -L --ppid=%d -o lwp" % ppid).split('\n')[1:])
+
+
 def pid_is_alive(pid):
     """
     True if process pid exists and is not yet stuck in Zombie state.
@@ -949,6 +968,20 @@ def system_output_parallel(commands, timeout=None, ignore_status=False,
                                   timeout=timeout, ignore_status=ignore_status)]
     for x in out:
         if out[-1:] == '\n': out = out[:-1]
+    return out
+
+
+def etraceback(prep, exc_info):
+    """
+    Enhanced Traceback formats traceback into lines "prep: line\nname: line"
+    @param prep: desired line preposition
+    @param exc_info: sys.exc_info of the exception
+    @return: string which contains beautifully formatted exception
+    """
+    out = ""
+    for line in traceback.format_exception(exc_info[0], exc_info[1],
+                                           exc_info[2]):
+        out += "%s: %s" % (prep, line)
     return out
 
 

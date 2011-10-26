@@ -8,7 +8,7 @@ class VirshMonitor:
     Wraps "Virsh monitor" commands.
     """
 
-    def __init__(self, virsh_exec='virsh', name, vmname, password=None,
+    def __init__(self, virsh_exec, name, vmname, password=None,
                  prompt=None, hostname='localhost', driver=None, username=None,
                  linesep="\\n"):
         """
@@ -296,7 +296,7 @@ class VirshMonitor:
         """
         if debug:
             logging.debug("Requesting screendump %s" % filename)
-        self.cmd("screenshot %s" % filename)
+        return self.cmd("screenshot %s" % filename)
 
 
     def info(self, what):
