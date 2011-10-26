@@ -24,6 +24,20 @@ def _import_sys_libvirt():
 
 sLibvirt = _import_sys_libvirt()
 
+def _getURI():
+    conn = sLibvirt.open(None)
+    ret = conn.getURI()
+    conn.close()
+    return ret
+
+VIRSH_DEFAULT_URI = _getURI()
+LIBVIRT_QEMU = False
+LIBVIRT_XEN = False
+
+if VIRSH_DEFAULT_URI == 'qemu:///system':
+    LIBVIRT_QEMU = True
+elif VIRSH_DEFAULT_URI == 'xen:///':
+    LIBVIRT_XEN = True
 
 def libvirtd_restart():
     """
@@ -436,34 +450,34 @@ class VM(virt_vm.BaseVM):
                                   image_params.get("drive_sparse"),
                                   image_params.get("drive_cache"),
                                   image_params.get("image_format"))
+        if LIBVIRT_QEMU:
+            for cdrom in params.objects("cdroms"):
+                cdrom_params = params.object_params(cdrom)
+                iso = cdrom_params.get("cdrom")
+                if params.get("use_libvirt_cdrom_switch") == 'yes':
+                    # we don't want to skip the winutils iso
+                    if not cdrom == 'winutils':
+                        logging.debug("Using --cdrom instead of --disk for install")
+                        logging.debug("Skipping CDROM:%s:%s", cdrom, iso)
+                        continue
+                if params.get("medium") == 'cdrom_no_kernel_initrd':
+                    if iso == params.get("cdrom_cd1"):
+                        logging.debug("Using cdrom or url for install")
+                        logging.debug("Skipping CDROM: %s", iso)
+                        continue
 
-        for cdrom in params.objects("cdroms"):
-            cdrom_params = params.object_params(cdrom)
-            iso = cdrom_params.get("cdrom")
-            if params.get("use_libvirt_cdrom_switch") == 'yes':
-                # we don't want to skip the winutils iso
-                if not cdrom == 'winutils':
-                    logging.debug("Using --cdrom instead of --disk for install")
-                    logging.debug("Skipping CDROM:%s:%s", cdrom, iso)
-                    continue
-            if params.get("medium") == 'cdrom_no_kernel_initrd':
-                if iso == params.get("cdrom_cd1"):
-                    logging.debug("Using cdrom or url for install")
-                    logging.debug("Skipping CDROM: %s", iso)
-                    continue
-
-            if iso:
-                virt_install_cmd += add_drive(help,
-                             virt_utils.get_path(root_dir, iso),
-                                  image_params.get("iso_image_pool"),
-                                  image_params.get("iso_image_vol"),
-                                  'cdrom',
-                                  None,
-                                  None,
-                                  None,
-                                  None,
-                                  None,
-                                  None)
+                if iso:
+                    virt_install_cmd += add_drive(help,
+                                 virt_utils.get_path(root_dir, iso),
+                                      image_params.get("iso_image_pool"),
+                                      image_params.get("iso_image_vol"),
+                                      'cdrom',
+                                      None,
+                                      None,
+                                      None,
+                                      None,
+                                      None,
+                                      None)
 
         # We may want to add {floppy_otps} parameter for -fda
         # {fat:floppy:}/path/. However vvfat is not usually recommended.
@@ -488,9 +502,12 @@ class VM(virt_vm.BaseVM):
             virt_install_cmd += " --mac %s" % mac
             self.nic_mac = mac
 
-        virt_install_cmd += (" --network %s,model=%s" %
-                             (params.get("virsh_network"),
-                              params.get("nic_model")))
+        if LIBVIRT_XEN:
+            virt_install_cmd += (" --network=%s" % params.get("virsh_network"))
+        elif LIBVIRT_QEMU:
+            virt_install_cmd += (" --network=%s,model=%s" %
+                                 (params.get("virsh_network"),
+                                  params.get("nic_model")))
 
         if params.get("use_no_reboot") == "yes":
             virt_install_cmd += " --noreboot"
