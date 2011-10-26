@@ -940,6 +940,10 @@ class VM(virt_vm.BaseVM):
                     self.free_mac_address(vlan)
 
 
+    def remove_vm(self):
+        return virsh_remove_domain(self.name)
+
+
     def get_address(self, index=0):
         """
         Return the address of a NIC of the guest, in host space.
