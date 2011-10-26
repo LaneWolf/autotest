@@ -2,6 +2,7 @@ AUTHOR = """
 mjenner@redhat.com (Martin Jenner)
 lmr@redhat.com (Lucas Meneghel Rodrigues)
 crosa@redhat.com (Cleber Rosa)
+phrdina@redhat.com (Pavel Hrdina)
 """
 TIME = 'MEDIUM'
 NAME = 'libvirt test'
@@ -22,7 +23,7 @@ from autotest_lib.client.virt import virt_utils
 # set English environment (command output might be localized, need to be safe)
 os.environ['LANG'] = 'en_US.UTF-8'
 
-libvirt_test_dir = os.path.join(os.environ['AUTODIR'],'tests/libvirt')
+libvirt_test_dir = os.path.join(os.environ['AUTODIR'],'tests/libvirt_api')
 
 parser = cartesian_config.Parser()
 parser.parse_file(os.path.join(libvirt_test_dir, "tests.cfg"))
