@@ -1,6 +1,6 @@
 #!/usr/bin/python
 """
-Program to help setup libvirt test environment
+Program to help setup virt test environment
 
 @copyright: Red Hat 2011
 """
@@ -8,7 +8,7 @@ import os, sys
 import common
 from autotest_lib.client.virt import virt_utils
 
-test_name = "libvirt"
+test_name = "virt"
 test_dir = os.path.dirname(sys.modules[__name__].__file__)
 test_dir = os.path.abspath(test_dir)
 base_dir = "/tmp/libvirt_autotest_root"

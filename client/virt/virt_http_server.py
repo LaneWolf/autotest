@@ -110,14 +110,10 @@ def http_server(port=8000, cwd=None, terminate_callable=None):
         cwd = os.getcwd()
     http.cwd = cwd
 
-    while True:
-        if terminate_callable is not None:
-            terminate = terminate_callable()
-        else:
-            terminate = False
+    if terminate_callable is not None:
+        http.__is_shut_down = terminate_callable()
 
-        if not terminate:
-            http.handle_request()
+    http.serve_forever()
 
 
 if __name__ == '__main__':

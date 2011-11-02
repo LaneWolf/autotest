@@ -9,9 +9,6 @@ from autotest_lib.client.virt import virt_vm, virt_utils, virt_http_server
 _url_auto_content_server_thread = None
 _url_auto_content_server_thread_event = None
 
-_unattended_server_thread = None
-_unattended_server_thread_event = None
-
 
 def terminate_auto_content_server_thread():
     global _url_auto_content_server_thread
@@ -23,20 +20,6 @@ def terminate_auto_content_server_thread():
         return False
 
     if _url_auto_content_server_thread_event.isSet():
-        return True
-
-    return False
-
-
-def terminate_unattended_server_thread():
-    global _unattended_server_thread, _unattended_server_thread_event
-
-    if _unattended_server_thread is None:
-        return False
-    if _unattended_server_thread_event is None:
-        return False
-
-    if  _unattended_server_thread_event.isSet():
         return True
 
     return False
@@ -300,10 +283,6 @@ class UnattendedInstallConfig(object):
         self.url_auto_content_ip = params.get('url_auto_ip', '192.168.122.1')
         self.url_auto_content_port = None
 
-        # Kickstart server params
-        # use the same IP as url_auto_content_ip, but a different port
-        self.unattended_server_port = None
-
 
     def answer_kickstart(self, answer_path):
         """
@@ -324,12 +303,7 @@ class UnattendedInstallConfig(object):
         if self.medium in ["cdrom", "kernel_initrd"]:
             content = "cdrom"
         elif self.medium == "url":
-            if self.url == 'auto':
-                url = "http://%s:%s" % (self.url_auto_content_ip,
-                                        self.url_auto_content_port)
-            else:
-                url = self.url
-            content = "url --url %s" % url
+            content = "url --url %s" % self.url
 
         elif self.medium == "nfs":
             content = "nfs --server=%s --dir=%s" % (self.nfs_server,
@@ -495,53 +469,6 @@ class UnattendedInstallConfig(object):
             logging.debug(line)
 
 
-    def setup_unattended_http_server(self):
-        '''
-        Setup a builtin http server for serving the kickstart file
-
-        Does nothing if unattended file is not a kickstart file
-        '''
-        global _unattended_server_thread, _unattended_server_thread_event
-
-        if self.unattended_file.endswith('.ks'):
-            # Red Hat kickstart install
-            dest_fname = 'ks.cfg'
-
-            answer_path = os.path.join(self.tmpdir, dest_fname)
-            self.answer_kickstart(answer_path)
-
-            if self.unattended_server_port is None:
-                self.unattended_server_port = virt_utils.find_free_port(
-                    8000,
-                    8100,
-                    self.url_auto_content_ip)
-
-            if _unattended_server_thread is None:
-                _unattended_server_thread_event = threading.Event()
-                _unattended_server_thread = threading.Thread(
-                    target=virt_http_server.http_server,
-                    args=(self.unattended_server_port, self.tmpdir,
-                          terminate_unattended_server_thread))
-                _unattended_server_thread.start()
-
-        # Point installation to this kickstart url
-        ks_param = 'ks=http://%s:%s/%s' % (self.url_auto_content_ip,
-                                           self.unattended_server_port,
-                                           dest_fname)
-        self.extra_params = getattr(self, 'extra_params')
-        if 'ks=' in self.extra_params:
-            extra_params = re.sub('ks\=[\w\d\:\.\/]+',
-                                  ks_param,
-                                  self.extra_params)
-        else:
-            extra_params = '%s %s' % (self.extra_params,
-                                      ks_param)
-
-        # reflect change on params
-        self.extra_params = extra_params
-        self.params['extra_params'] = self.extra_params
-
-
     def setup_boot_disk(self):
         if self.unattended_file.endswith('.sif'):
             dest_fname = 'winnt.sif'
@@ -653,28 +580,86 @@ class UnattendedInstallConfig(object):
 
         logging.debug("starting unattended content web server")
 
+        self.url_auto_content_port = virt_utils.find_free_port(
+            8000,
+            8100,
+            self.url_auto_content_ip)
+
+        logging.debug("unattended content web server will be started at port %s" % self.url_auto_content_port)
+
+        if _url_auto_content_server_thread is None:
+            _url_auto_content_server_thread_event = threading.Event()
+            _url_auto_content_server_thread = threading.Thread(
+                target=virt_http_server.http_server,
+                args=(self.url_auto_content_port, self.tmpdir,
+                      terminate_auto_content_server_thread))
+            _url_auto_content_server_thread.start()
+
         if self.params.get('cdrom_cd1'):
             # setup and mount cdrom contents to be served by http server
             m_cmd = ('mount -t iso9660 -v -o loop,ro %s %s' %
                      (self.cdrom_cd1, self.cdrom_cd1_mount))
             utils.run(m_cmd)
 
-        self.url_auto_content_port = virt_utils.find_free_port(
-            8000,
-            8100,
-            self.url_auto_content_ip)
+            self.url = "'http://%s:%s/%s/'" % (self.url_auto_content_ip,
+                                                 self.url_auto_content_port,
+                                                 os.path.basename(self.cdrom_cd1_mount))
+            self.params['auto_content_url'] = self.url
 
-        if _url_auto_content_server_thread is None:
-            _url_auto_content_server_thread_event = threading.Event()
-            _url_auto_content_server_thread = threading.Thread(
-                target=virt_http_server.http_server,
-                args=(self.url_auto_content_port, self.cdrom_cd1_mount,
-                      terminate_auto_content_server_thread))
-            _url_auto_content_server_thread.start()
+        if self.unattended_file.endswith('.ks'):
+            # Red Hat kickstart install
+            dest_fname = 'ks.cfg'
+            answer_path = os.path.join(self.tmpdir, dest_fname)
+            self.answer_kickstart(answer_path)
 
-        auto_content_url = 'http://%s:%s' % (self.url_auto_content_ip,
-                                             self.url_auto_content_port)
-        self.params['auto_content_url'] = auto_content_url
+            if self.params.get('hvm_or_pv') and self.params.get('hvm_or_pv') == "hvm":
+                image_path = tempfile.mkdtemp(prefix='image_', dir=self.tmpdir)
+                cp_cmd = ('cp -r %s/isolinux/ %s/' % (self.cdrom_cd1_mount, image_path))
+                utils.run(cp_cmd)
+                cp_cmd = ('cp %s %s/isolinux/' % (answer_path, image_path))
+                utils.run(cp_cmd)
+                ks_param = 'ks=http://%s:%s/%s' % (self.url_auto_content_ip,
+                                                   self.url_auto_content_port,
+                                                   dest_fname)
+                self.extra_params = getattr(self, 'extra_params')
+                if 'ks=' in self.extra_params:
+                    extra_params = re.sub('ks\=[\w\d\:\.\/]+',
+                                          ks_param,
+                                          self.extra_params)
+                else:
+                    extra_params = '%s %s' % (self.extra_params,
+                                          ks_param)
+                extra_params = '%s xen_emul_unplug=never' % (extra_params)
+
+                f = open(os.path.join(image_path, 'isolinux', 'isolinux.cfg'), 'w')
+                f.write('default /isolinux/vmlinuz append initrd=/isolinux/initrd.img %s\n' % extra_params)
+                f.close()
+                iso_path = os.path.join(self.tmpdir, 'boot.iso')
+                m_cmd = ('mkisofs -o %s -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -R -J -V -T %s'
+                         % (iso_path, image_path))
+                utils.run(m_cmd)
+                self.extra_params = extra_params
+                self.params['extra_params'] = ''
+                self.params['auto_content_url'] = ''
+                self.params['cdrom_cd1'] = iso_path
+            else:
+                self.answer_kickstart(answer_path)
+                # Point installation to this kickstart url
+                ks_param = 'ks=http://%s:%s/%s' % (self.url_auto_content_ip,
+                                                   self.url_auto_content_port,
+                                                   dest_fname)
+                self.extra_params = getattr(self, 'extra_params')
+                if 'ks=' in self.extra_params:
+                    extra_params = re.sub('ks\=[\w\d\:\.\/]+',
+                                          ks_param,
+                                          self.extra_params)
+                else:
+                    extra_params = '%s %s' % (self.extra_params,
+                                          ks_param)
+
+                # reflect change on params
+                self.extra_params = extra_params
+                self.params['extra_params'] = self.extra_params
 
 
     @error.context_aware
@@ -751,7 +736,6 @@ class UnattendedInstallConfig(object):
             self.setup_url()
             if self.url == 'auto':
                 self.setup_url_auto()
-                self.setup_unattended_http_server()
         elif self.medium == "nfs":
             self.setup_nfs()
         else:
@@ -827,13 +811,6 @@ def run_unattended_install(test, params, env):
         _url_auto_content_server_thread.join(3)
         _url_auto_content_server_thread = None
         cleanup(unattended_install_config.cdrom_cd1_mount)
-
-    global _unattended_server_thread
-    global _unattended_server_thread_event
-    if _unattended_server_thread is not None:
-        _unattended_server_thread_event.set()
-        _unattended_server_thread.join(3)
-        _unattended_server_thread = None
 
     time_elapsed = time.time() - start_time
     logging.info("Guest reported successful installation after %d s (%d min)",

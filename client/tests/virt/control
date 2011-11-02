@@ -5,7 +5,7 @@ crosa@redhat.com (Cleber Rosa)
 phrdina@redhat.com (Pavel Hrdina)
 """
 TIME = 'MEDIUM'
-NAME = 'libvirt test'
+NAME = 'virt test'
 TEST_TYPE = 'client'
 TEST_CLASS = 'Virtualization'
 TEST_CATEGORY = 'Functional'

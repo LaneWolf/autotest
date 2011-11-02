@@ -1,6 +1,6 @@
 from autotest_lib.client.virt import virt_test
 
-class libvirt_api(virt_test.virt_test):
+class virt(virt_test.virt_test):
     """
     Suite of libvirt virtualization functional tests.
 

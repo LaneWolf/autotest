@@ -27,7 +27,6 @@ sLibvirt = _import_sys_libvirt()
 def _getURI():
     conn = sLibvirt.open(None)
     ret = conn.getURI()
-    conn.close()
     return ret
 
 VIRSH_DEFAULT_URI = _getURI()
@@ -204,7 +203,13 @@ class VM(virt_vm.BaseVM):
             return " --name '%s'" % name
 
         def add_hvm_or_pv(help, hvm_or_pv):
-            return " %s" % hvm_or_pv
+            if hvm_or_pv == "hvm":
+                return " --hvm --accelerate"
+            elif hvm_or_pv == "pv":
+                return " --paravirt"
+            else:
+                logging.warning("Unknown virt type hvm_or_pv, using default.")
+                return ""
 
         def add_mem(help, mem):
             return " --ram=%s" % mem
@@ -378,7 +383,10 @@ class VM(virt_vm.BaseVM):
         # TODO: directory location for vmlinuz/kernel for cdrom install ?
         location = None
         if params.get("medium") == 'url':
-            location = params.get("url")
+            if params.get("url") == 'auto':
+                location = params.get('auto_content_url')
+            else:
+                location = params.get('url')
         elif params.get("medium") == 'kernel_initrd':
             # directory location of kernel/initrd pair (directory layout must
             # be in format libvirt will recognize)
@@ -392,10 +400,11 @@ class VM(virt_vm.BaseVM):
             else:
                 location = params.get("image_dir")
 
-        if location:
-            virt_install_cmd += add_location(help, location)
-        else:
-            virt_install_cmd += add_import(help)
+        if not (LIBVIRT_XEN and params.get('hvm_or_pv') == 'hvm'):
+            if location:
+                virt_install_cmd += add_location(help, location)
+            else:
+                virt_install_cmd += add_import(help)
 
         if params.get("display") == "vnc":
             if params.get("vnc_port"):
@@ -450,7 +459,7 @@ class VM(virt_vm.BaseVM):
                                   image_params.get("drive_sparse"),
                                   image_params.get("drive_cache"),
                                   image_params.get("image_format"))
-        if LIBVIRT_QEMU:
+        if LIBVIRT_QEMU or (LIBVIRT_XEN and params.get('hvm_or_pv') == 'hvm'):
             for cdrom in params.objects("cdroms"):
                 cdrom_params = params.object_params(cdrom)
                 iso = cdrom_params.get("cdrom")
@@ -969,11 +978,9 @@ class VM(virt_vm.BaseVM):
             dom = conn.lookupByName(self.name)
         except:
             logging.debug("Domain %s not found" % self.name)
-            conn.close()
             return False
 
         if func is None:
-            conn.close()
             return True
         else:
             tmp_func = eval('dom.'+func)
@@ -981,5 +988,4 @@ class VM(virt_vm.BaseVM):
                 ret = tmp_func()
             else:
                 ret = tmp_func(params)
-            conn.close()
             return ret
