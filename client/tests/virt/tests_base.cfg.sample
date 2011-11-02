@@ -1490,6 +1490,41 @@ variants:
                             nfs_server = REPLACE_THIS_WITH_NFS_SERVER
                             nfs_dir = REPLACE_THIS_WITH_NFS_DIRECTORY
 
+                    - 16.32:
+                        image_name = f16-32
+                        unattended_install:
+                            unattended_file = unattended/Fedora-16.ks
+                            cdrom_unattended = images/f16-32/ks.iso
+                            kernel = images/pxeboot/vmlinuz
+                            initrd = images/pxeboot/initrd.img
+                        unattended_install.cdrom:
+                            cdrom_cd1 = isos/linux/Fedora-16-i386-DVD.iso
+                            #md5sum_cd1 = 9a91492ac84dde9ceff0cb346a079487
+                            #md5sum_1m_cd1 = 82a6005e8b7740628c6e53eef92f6bc1
+                        unattended_install.url:
+                            url = REPLACE_THIS_WITH_TREE_URL
+                            nfs_server = REPLACE_THIS_WITH_NFS_SERVER
+                            nfs_dir = REPLACE_THIS_WITH_NFS_DIRECTORY
+
+                    - 16.64:
+                        image_name = f16-64
+                        unattended_install:
+                            unattended_file = unattended/Fedora-16.ks
+                            #floppy = images/f16-64/ks.vfd
+                            cdrom_unattended = images/f15-64/ks.iso
+                            #kernel = images/f16-64/vmlinuz
+                            #initrd = images/f16-64/initrd.img
+                            kernel = images/pxeboot/vmlinuz
+                            initrd = images/pxeboot/initrd.img
+                        unattended_install.cdrom:
+                            cdrom_cd1 = isos/linux/Fedora-16-x86_64-DVD.iso
+                            md5sum_cd1 = 0024647eb68fe1c91e89dbcd8626ee67
+                            #md5sum_1m_cd1 = c02f37e293bbc85be02a7c850a61273a
+                        unattended_install.url:
+                            url = REPLACE_THIS_WITH_TREE_URL
+                            nfs_server = REPLACE_THIS_WITH_NFS_SERVER
+                            nfs_dir = REPLACE_THIS_WITH_NFS_DIRECTORY
+
 
             - DSL-4.2.5:
                 no setup dbench bonnie linux_s3

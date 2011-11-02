@@ -313,6 +313,11 @@ class UnattendedInstallConfig(object):
 
         contents = re.sub(dummy_medium_re, content, contents)
 
+        if self.params.get('hvm_or_pv') == "hvm":
+            strings = re.findall('bootloader.*"', contents)
+            content = strings[0][:-1] + ' xen_emul_unplug=never"'
+            contents = re.sub('bootloader.*"', content, contents)
+
         logging.debug("Unattended install contents:")
         for line in contents.splitlines():
             logging.debug(line)
@@ -612,7 +617,7 @@ class UnattendedInstallConfig(object):
             answer_path = os.path.join(self.tmpdir, dest_fname)
             self.answer_kickstart(answer_path)
 
-            if self.params.get('hvm_or_pv') and self.params.get('hvm_or_pv') == "hvm":
+            if self.params.get('hvm_or_pv') == "hvm":
                 image_path = tempfile.mkdtemp(prefix='image_', dir=self.tmpdir)
                 cp_cmd = ('cp -r %s/isolinux/ %s/' % (self.cdrom_cd1_mount, image_path))
                 utils.run(cp_cmd)
@@ -640,8 +645,7 @@ class UnattendedInstallConfig(object):
                 utils.run(m_cmd)
                 self.extra_params = extra_params
                 self.params['extra_params'] = ''
-                self.params['auto_content_url'] = ''
-                self.params['cdrom_cd1'] = iso_path
+                self.params['auto_content_url'] = iso_path
             else:
                 self.answer_kickstart(answer_path)
                 # Point installation to this kickstart url

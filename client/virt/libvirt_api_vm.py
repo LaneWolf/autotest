@@ -400,7 +400,9 @@ class VM(virt_vm.BaseVM):
             else:
                 location = params.get("image_dir")
 
-        if not (LIBVIRT_XEN and params.get('hvm_or_pv') == 'hvm'):
+        if LIBVIRT_XEN and params.get('hvm_or_pv') == 'hvm':
+            virt_install_cmd += add_cdrom(help, location)
+        else:
             if location:
                 virt_install_cmd += add_location(help, location)
             else:
@@ -459,7 +461,7 @@ class VM(virt_vm.BaseVM):
                                   image_params.get("drive_sparse"),
                                   image_params.get("drive_cache"),
                                   image_params.get("image_format"))
-        if LIBVIRT_QEMU or (LIBVIRT_XEN and params.get('hvm_or_pv') == 'hvm'):
+        if LIBVIRT_QEMU:
             for cdrom in params.objects("cdroms"):
                 cdrom_params = params.object_params(cdrom)
                 iso = cdrom_params.get("cdrom")
