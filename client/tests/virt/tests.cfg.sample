@@ -94,7 +94,7 @@ variants:
         cdroms = cd1
         hvm_or_pv = hvm
         only raw
-        only rtl8139
+        only e1000
         only ide
         only smp2
         only no_pci_assignable

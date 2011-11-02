@@ -1499,7 +1499,7 @@ variants:
                             initrd = images/pxeboot/initrd.img
                         unattended_install.cdrom:
                             cdrom_cd1 = isos/linux/Fedora-16-i386-DVD.iso
-                            #md5sum_cd1 = 9a91492ac84dde9ceff0cb346a079487
+                            md5sum_cd1 = 90a0717a89440d5a2887d5022ab6cb46
                             #md5sum_1m_cd1 = 82a6005e8b7740628c6e53eef92f6bc1
                         unattended_install.url:
                             url = REPLACE_THIS_WITH_TREE_URL
