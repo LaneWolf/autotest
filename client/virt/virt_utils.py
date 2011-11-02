@@ -1240,7 +1240,7 @@ def run_tests(parser, job):
             # We need only one execution, profiled, hence we're passing
             # the profile_only parameter to job.run_test().
             profile_only = bool(profilers) or None
-            current_status = job.run_test_detail(dict.get("vm_type"),
+            current_status = job.run_test_detail('virt',
                                                  params=dict,
                                                  tag=test_tag,
                                                  iterations=test_iterations,
@@ -1250,7 +1250,7 @@ def run_tests(parser, job):
         else:
             # We will force the test to fail as TestNA during preprocessing
             dict['dependency_failed'] = 'yes'
-            current_status = job.run_test_detail(dict.get("vm_type"),
+            current_status = job.run_test_detail('virt',
                                                  params=dict,
                                                  tag=test_tag,
                                                  iterations=test_iterations)

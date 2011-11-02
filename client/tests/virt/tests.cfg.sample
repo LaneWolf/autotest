@@ -25,6 +25,7 @@ variants:
         qemu_img_binary = /usr/bin/qemu-img
         url = auto
         cdrom_cd1 = isos/linux/Fedora-15-x86_64-DVD.iso
+        cdroms = cd1
         hvm_or_pv = pv
         only raw
         only xennet
@@ -42,6 +43,7 @@ variants:
         qemu_img_binary = /usr/bin/qemu-img
         url = auto
         cdrom_cd1 = isos/linux/Fedora-15-x86_64-DVD.iso
+        cdroms = cd1
         hvm_or_pv = hvm
         only raw
         only rtl8139
