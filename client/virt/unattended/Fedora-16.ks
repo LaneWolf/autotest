@@ -21,7 +21,6 @@ autopart
 @base
 @development-libs
 @development-tools
-ntpdate
 dmidecode
 %end
 
