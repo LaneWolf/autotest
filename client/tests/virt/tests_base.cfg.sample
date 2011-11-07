@@ -1511,7 +1511,7 @@ variants:
                         unattended_install:
                             unattended_file = unattended/Fedora-16.ks
                             #floppy = images/f16-64/ks.vfd
-                            cdrom_unattended = images/f15-64/ks.iso
+                            cdrom_unattended = images/f16-64/ks.iso
                             #kernel = images/f16-64/vmlinuz
                             #initrd = images/f16-64/initrd.img
                             kernel = images/pxeboot/vmlinuz
