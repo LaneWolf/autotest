@@ -957,6 +957,10 @@ variants:
         type = block_stream
         alive_test_cmd = uname -a
 
+    - block_mirroring:
+        type = block_mirroring
+        block_mirror_cmd = drive_mirror
+
     - stop_continue: install setup image_copy unattended_install.cdrom
         type = stop_continue
         kill_vm_on_error = yes
